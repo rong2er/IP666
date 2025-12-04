@@ -1,4 +1,4 @@
-name: Filter Cloudflare Asian IPs
+name: Filter Proxy List by Tag
 
 # 触发机制：每天 UTC 2:00 (北京时间 10:00) 自动运行，或者手动点击运行
 on:
@@ -6,12 +6,11 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
-# 权限设置：允许脚本修改仓库内容（保存结果）
 permissions:
   contents: write
 
 jobs:
-  filter-ips:
+  filter-proxies:
     runs-on: ubuntu-latest
     
     steps:
@@ -24,86 +23,66 @@ jobs:
         python-version: '3.x'
 
     - name: Install dependencies
-      run: |
-        pip install requests ipaddress
+      run: pip install requests
 
     - name: Run Filter Script
-      # 在这里填入你找到的那个 TXT 网址
+      # 请在这里填入你的 TXT/订阅链接
       env:
-        SOURCE_URL: 'https://zip.cm.edu.kg/all.txt' # <--- 请替换成你找到的那个地址
+        SOURCE_URL: 'https://zip.cm.edu.kg/all.txt'
       run: |
         cat <<EOF > filter.py
         import requests
-        import ipaddress
         import os
 
-        # 定义亚洲热门地区的 Cloudflare IP 段 (白名单)
-        # 这些段涵盖了 HK(香港), JP(日本), KR(韩国), SG(新加坡), TW(台湾) 的主要优化段
-        ASIAN_CIDRS = [
-            # --- 香港 HK ---
-            "103.21.244.0/22", "103.22.203.0/24", "172.69.160.0/20", 
-            "162.158.176.0/24", "141.101.64.0/18",
+        # 定义我们要筛选的地区标签 (基于你提供的截图格式)
+        # 只要行内包含这些字符串的任意一个，就会被保留
+        TARGET_TAGS = [
+            "#HK",  # 香港
+            "#TW",  # 台湾
+            "#JP",  # 日本
+            "#KR",  # 韩国
+            "#SG",  # 新加坡
             
-            # --- 日本 JP ---
-            "103.21.244.0/22", "103.22.201.0/24", "103.31.5.0/24",
-            "172.67.248.0/24", "162.158.119.0/24",
-            
-            # --- 新加坡 SG ---
-            "103.21.244.0/22", "103.22.200.0/22", "103.31.6.0/24",
-            "172.69.132.0/24", "141.101.90.0/24", "172.71.0.0/16",
-            
-            # --- 韩国 KR ---
-            "172.67.252.0/24", "162.158.18.0/24", "172.70.0.0/16",
-            
-            # --- 台湾 TW ---
-            "172.67.228.0/24", "108.162.249.0/24"
+            # 如果你的列表里有中文标签，也可以加在这里，例如：
+            # "#香港", "#日本"
         ]
-
-        # 预处理 CIDR 对象，加快匹配速度
-        cidr_networks = [ipaddress.ip_network(cidr, strict=False) for cidr in ASIAN_CIDRS]
-
-        def is_asian_ip(ip_str):
-            try:
-                # 清理 IP 字符串中的端口号或空格
-                ip_clean = ip_str.split(':')[0].strip()
-                if not ip_clean: return False
-                
-                ip_obj = ipaddress.ip_address(ip_clean)
-                
-                # 检查 IP 是否在白名单段内
-                for net in cidr_networks:
-                    if ip_obj in net:
-                        return True
-            except ValueError:
-                return False
-            return False
 
         def main():
             url = os.environ.get('SOURCE_URL')
-            print(f"正在下载 IP 列表: {url}")
+            print(f"正在下载列表: {url}")
             
             try:
-                resp = requests.get(url, timeout=10)
+                # 下载内容
+                resp = requests.get(url, timeout=30)
                 resp.raise_for_status()
-                all_ips = resp.text.splitlines()
                 
-                print(f"下载成功，原始 IP 数量: {len(all_ips)}")
+                # 按行分割
+                all_lines = resp.text.splitlines()
+                print(f"下载成功，原始行数: {len(all_lines)}")
                 
-                filtered_ips = []
-                for line in all_ips:
-                    # 有些列表可能是 CSV 格式，取第一列
-                    ip = line.replace(',', ' ').split()[0]
-                    if is_asian_ip(ip):
-                        filtered_ips.append(ip)
+                filtered_lines = []
                 
-                # 去重
-                filtered_ips = sorted(list(set(filtered_ips)))
+                for line in all_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    # 核心筛选逻辑：检查行内是否包含目标标签
+                    # 使用 .upper() 确保 #hk 和 #HK 都能识别
+                    if any(tag in line.upper() for tag in TARGET_TAGS):
+                        filtered_lines.append(line)
                 
-                print(f"筛选完成，命中亚洲 IP 数量: {len(filtered_ips)}")
+                # 去重（防止同一节点出现多次）
+                filtered_lines = sorted(list(set(filtered_lines)))
+                
+                print(f"筛选完成，命中行数: {len(filtered_lines)}")
+                
+                if len(filtered_lines) == 0:
+                    print("警告：结果为 0。请检查 SOURCE_URL 是否正确，或者文件内的标签格式是否真的是 #HK")
                 
                 # 保存结果
-                with open('asian_ips.txt', 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(filtered_ips))
+                with open('asian_proxies.txt', 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(filtered_lines))
                     
             except Exception as e:
                 print(f"发生错误: {e}")
@@ -119,6 +98,7 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add asian_ips.txt
-        git commit -m "Auto update Asian IPs: $(date +'%Y-%m-%d')" || exit 0
+        # 如果文件有变动才提交
+        git add asian_proxies.txt
+        git commit -m "Auto update Proxy List: $(date +'%Y-%m-%d')" || exit 0
         git push
