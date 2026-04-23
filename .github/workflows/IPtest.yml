@@ -22,8 +22,7 @@ name: IP Test
 on:
   schedule:
     # cron格式：分 时 日 月 周
-    # 表示每天北京时间23点55分执行一次
-    - cron: '55 15 * * *'
+    - cron: '0 16 */5 * *'  # 16:00 UTC 执行（即北京时间凌晨 00:00），每 5 天一次
   workflow_dispatch: # 允许手动触发（在GitHub页面点击"Run workflow"按钮）
 
 # 工作流任务定义
